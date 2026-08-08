@@ -1,0 +1,48 @@
+name = "syxmail"
+main = "src/index.js"
+compatibility_date = "2025-06-04"
+keep_vars = true
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "db"
+database_name = "syxmail-db"
+database_id = "fa21e13e-517c-4c7a-b3b8-5df031f67227"
+
+[[kv_namespaces]]
+binding = "kv"
+id = "5e99fc76d37549a287984fc98a2fa475"
+
+[[r2_buckets]]
+binding = "r2"
+bucket_name = "syxmail-r2"
+
+#[[send_email]]
+#name = "email"			#CF发件, 配置后优先使用
+
+[ai]
+binding = "ai"
+
+[assets]
+binding = "assets"
+directory = "./dist"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
+[triggers]
+crons = ["0 16 * * *"]
+
+[vars]
+ai_model = "@cf/meta/llama-3.1-8b-instruct"
+analysis_cache = false
+orm_log = false
+domain = ["lerxagentic.tech"]
+admin = "admin@lerxagentic.tech"
+CLOUDFLARE_ACCOUNT_ID = "64c9ace8492365de487929b73e0b8196"
+
+
+[build]
+command = "pnpm --prefix ../mail-vue install && pnpm --prefix ../mail-vue run build"
+
