@@ -57,7 +57,7 @@ jobs:
       - name: 📦 安装依赖 / Install dependencies
         run: |
           pnpm install --frozen-lockfile
-          pnpm --prefix ../mail-vue install --frozen-lockfile
+          (cd ../mail-vue && pnpm install --frozen-lockfile)
         working-directory: ./mail-worker
 
       - name: 📡 禁用 Wrangler 遥测 / Disable wrangler telemetry
@@ -216,6 +216,10 @@ jobs:
           
           sed -i "s|\${D1_DATABASE_ID}|$D1_ID|g" "$CONFIG_FILE"
           echo "✅ Setup completed."
+
+      - name: 🏗️ 构建前端 / Build frontend
+        run: (cd ../mail-vue && pnpm run build)
+        working-directory: ./mail-worker
 
       - name: 🚀 开始部署 / Start deployment
         id: deploy
