@@ -792,7 +792,9 @@ const emailService = {
 	},
 
 	async cleanupExpired(c) {
-		const cutoff = dayjs().subtract(EMAIL_RETENTION_DAYS, 'day').format('YYYY-MM-DD HH:mm:ss');
+		const configuredDays = Number(c?.env?.EMAIL_RETENTION_DAYS || c?.env?.email_retention_days);
+		const retentionDays = Number.isFinite(configuredDays) && configuredDays > 0 ? configuredDays : EMAIL_RETENTION_DAYS;
+		const cutoff = dayjs().subtract(retentionDays, 'day').format('YYYY-MM-DD HH:mm:ss');
 		const targetSql = `
 			SELECT email_id
 			FROM email

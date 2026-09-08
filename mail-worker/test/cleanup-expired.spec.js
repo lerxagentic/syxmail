@@ -41,4 +41,31 @@ describe('email storage cleanup', () => {
 		expect(prepared[0].params[1]).toBe(500);
 		expect(batches[0].every(statement => statement.sql.includes('WITH target AS'))).toBe(true);
 	});
+
+	it('respects configurable retention days such as 1 day', async () => {
+		let boundCutoff = null;
+		const env = {
+			EMAIL_RETENTION_DAYS: 1,
+			db: {
+				prepare(sql) {
+					return {
+						bind(...params) {
+							boundCutoff = params[0];
+							return {
+								all: async () => ({ results: [] })
+							};
+						}
+					};
+				}
+			}
+		};
+
+		const result = await emailService.cleanupExpired({ env });
+		expect(result).toBe(0);
+		expect(boundCutoff).toBeDefined();
+		// Cutoff date for 1 day retention must be recent (within the last 24-48 hours)
+		const diffHours = (Date.now() - new Date(boundCutoff).getTime()) / (1000 * 60 * 60);
+		expect(diffHours).toBeGreaterThan(20);
+		expect(diffHours).toBeLessThan(30);
+	});
 });
