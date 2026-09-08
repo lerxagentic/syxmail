@@ -25,6 +25,12 @@ export default {
 	},
 	email: email,
 	async scheduled(c, env, ctx) {
+		if (c.cron === '*/15 * * * *') {
+			await emailService.cleanupExpired({ env });
+			return;
+		}
+
+		await emailService.cleanupExpired({ env });
 		if (c.cron === '*/30 * * * *') {
 			await analysisService.refreshEchartsCache({ env })
 			return;

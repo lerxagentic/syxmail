@@ -23,6 +23,9 @@ import account from "../entity/account";
 import { att } from '../entity/att';
 import telegramService from './telegram-service';
 
+const EMAIL_CLEANUP_BATCH_SIZE = 500;
+const EMAIL_RETENTION_DAYS = 7;
+
 const emailService = {
 
 	async list(c, params, userId) {
@@ -773,6 +776,63 @@ const emailService = {
 			))
 			.groupBy(email.userId);
 		return result;
+	},
+
+	async cleanupExpired(c) {
+		const cutoff = dayjs().subtract(EMAIL_RETENTION_DAYS, 'day').format('YYYY-MM-DD HH:mm:ss');
+		const targetSql = `
+			SELECT email_id
+			FROM email
+			WHERE status = ${emailConst.status.NOONE} OR create_time < ?
+			ORDER BY email_id
+			LIMIT ?
+		`;
+		const targetParams = [cutoff, EMAIL_CLEANUP_BATCH_SIZE];
+		const targetRows = await c.env.db.prepare(targetSql).bind(...targetParams).all();
+		if (!targetRows.results?.length) {
+			return 0;
+		}
+
+		// Delete R2 objects only when no attachment outside this batch references them.
+		// R2 is cleaned first so a failed storage delete leaves the D1 rows retryable.
+		const orphanRows = await c.env.db.prepare(`
+			WITH target AS (${targetSql})
+			SELECT a.key
+			FROM attachments a
+			JOIN target t ON t.email_id = a.email_id
+			WHERE NOT EXISTS (
+				SELECT 1
+				FROM attachments remaining
+				WHERE remaining.key = a.key
+				  AND remaining.email_id NOT IN (SELECT email_id FROM target)
+			)
+			GROUP BY a.key
+		`).bind(...targetParams).all();
+		const orphanKeys = (orphanRows.results || []).map(row => row.key).filter(Boolean);
+		if (orphanKeys.length > 0) {
+			await attService.batchDelete(c, orphanKeys);
+		}
+
+		const deleteResults = await c.env.db.batch([
+			c.env.db.prepare(`
+				WITH target AS (${targetSql})
+				DELETE FROM star WHERE email_id IN (SELECT email_id FROM target)
+			`).bind(...targetParams),
+			c.env.db.prepare(`
+				WITH target AS (${targetSql})
+				DELETE FROM attachments WHERE email_id IN (SELECT email_id FROM target)
+			`).bind(...targetParams),
+			c.env.db.prepare(`
+				WITH target AS (${targetSql})
+				DELETE FROM email WHERE email_id IN (SELECT email_id FROM target)
+			`).bind(...targetParams),
+		]);
+
+		const deleted = Number(deleteResults[2]?.meta?.changes || 0);
+		if (deleted > 0) {
+			console.log(`Email cleanup deleted ${deleted} old/unknown messages`);
+		}
+		return deleted;
 	},
 
 	async allList(c, params) {
