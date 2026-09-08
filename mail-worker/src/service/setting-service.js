@@ -25,7 +25,9 @@ const settingService = {
 					`ALTER TABLE setting ADD COLUMN domain TEXT NOT NULL DEFAULT '[]';`,
 					`ALTER TABLE setting ADD COLUMN black_subject TEXT NOT NULL DEFAULT '';`,
 					`ALTER TABLE setting ADD COLUMN black_content TEXT NOT NULL DEFAULT '';`,
-					`ALTER TABLE setting ADD COLUMN black_from TEXT NOT NULL DEFAULT '';`
+					`ALTER TABLE setting ADD COLUMN black_from TEXT NOT NULL DEFAULT '';`,
+					`ALTER TABLE setting ADD COLUMN email_retention_days INTEGER NOT NULL DEFAULT 7;`,
+					`ALTER TABLE setting ADD COLUMN email_retention_rules TEXT NOT NULL DEFAULT '{}';`
 				];
 				for (const sql of alterSqls) {
 					try { await c.env.db.prepare(sql).run(); } catch (_) {}
@@ -40,6 +42,18 @@ const settingService = {
 			throw new BizError('Database not initialized.');
 		}
 
+		// Ensure high-performance D1 indexes exist to protect against Full Table Scans
+		const indexSqls = [
+			`CREATE INDEX IF NOT EXISTS idx_account_email ON account(email);`,
+			`CREATE INDEX IF NOT EXISTS idx_email_status_create_time ON email(status, create_time);`,
+			`CREATE INDEX IF NOT EXISTS idx_email_user_id_account_id ON email(user_id, account_id);`,
+			`CREATE INDEX IF NOT EXISTS idx_attachments_email_id ON attachments(email_id);`,
+			`CREATE INDEX IF NOT EXISTS idx_star_email_id ON star(email_id);`
+		];
+		for (const sql of indexSqls) {
+			try { await c.env.db.prepare(sql).run(); } catch (_) {}
+		}
+
 		let resendTokens = {};
 		try {
 			resendTokens = typeof settingRow.resendTokens === 'string' ? JSON.parse(settingRow.resendTokens) : (settingRow.resendTokens || {});
@@ -47,7 +61,19 @@ const settingService = {
 			resendTokens = {};
 		}
 
-		const cachedSetting = { ...settingRow, resendTokens };
+		let emailRetentionRules = { domains: {}, users: {} };
+		try {
+			emailRetentionRules = typeof settingRow.emailRetentionRules === 'string'
+				? JSON.parse(settingRow.emailRetentionRules)
+				: (settingRow.emailRetentionRules || { domains: {}, users: {} });
+		} catch (_) {
+			emailRetentionRules = { domains: {}, users: {} };
+		}
+		const emailRetentionDays = Number.isFinite(Number(settingRow.emailRetentionDays))
+			? Number(settingRow.emailRetentionDays)
+			: 7;
+
+		const cachedSetting = { ...settingRow, resendTokens, emailRetentionRules, emailRetentionDays };
 		if (c.env?.kv) {
 			await c.env.kv.put(KvConst.SETTING, JSON.stringify(cachedSetting));
 		}
@@ -70,7 +96,19 @@ const settingService = {
 			} catch (_) {
 				setting.resendTokens = {};
 			}
-		} else if (!setting.resendTokens) {
+		}
+
+		if (typeof setting.emailRetentionRules === 'string') {
+			try {
+				setting.emailRetentionRules = JSON.parse(setting.emailRetentionRules);
+			} catch (_) {
+				setting.emailRetentionRules = { domains: {}, users: {} };
+			}
+		} else if (!setting.emailRetentionRules) {
+			setting.emailRetentionRules = { domains: {}, users: {} };
+		}
+		setting.emailRetentionDays = Number.isFinite(Number(setting.emailRetentionDays)) ? Number(setting.emailRetentionDays) : 7;
+		if (!setting.resendTokens) {
 			setting.resendTokens = {};
 		}
 
@@ -191,6 +229,14 @@ const settingService = {
 
 		if (Array.isArray(params.aiCodeFilter)) {
 			params.aiCodeFilter = params.aiCodeFilter + '';
+		}
+
+		if (params.emailRetentionRules && typeof params.emailRetentionRules === 'object') {
+			params.emailRetentionRules = JSON.stringify(params.emailRetentionRules);
+		}
+
+		if (params.emailRetentionDays !== undefined) {
+			params.emailRetentionDays = Number(params.emailRetentionDays) || 7;
 		}
 
 		params.resendTokens = JSON.stringify(resendTokens);

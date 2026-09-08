@@ -52,6 +52,8 @@ export const setting = sqliteTable('setting', {
 	blackFrom: text('black_from').default('').notNull(),
 	aiCode: integer('ai_code').default(1).notNull(),
 	aiCodeFilter: text('ai_code_filter').default('').notNull(),
-	domain: text('domain').default('[]').notNull()
+	domain: text('domain').default('[]').notNull(),
+	emailRetentionDays: integer('email_retention_days').default(7).notNull(),
+	emailRetentionRules: text('email_retention_rules').default('{}').notNull()
 });
 export default setting

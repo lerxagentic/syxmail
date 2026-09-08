@@ -68,4 +68,42 @@ describe('email storage cleanup', () => {
 		expect(diffHours).toBeGreaterThan(20);
 		expect(diffHours).toBeLessThan(30);
 	});
+
+	it('evaluates per-domain and per-user retention rules correctly', async () => {
+		let capturedSql = null;
+		let capturedParams = [];
+		const env = {
+			kv: {
+				get: async () => ({
+					emailRetentionDays: 30,
+					emailRetentionRules: {
+						domains: { 'temporary.tech': 1 },
+						users: { '99': 3, 'vip@lerxagentic.tech': 60 }
+					}
+				})
+			},
+			db: {
+				prepare(sql) {
+					return {
+						bind(...params) {
+							capturedSql = sql;
+							capturedParams = params;
+							return {
+								all: async () => ({ results: [] })
+							};
+						}
+					};
+				}
+			}
+		};
+
+		const result = await emailService.cleanupExpired({ env });
+		expect(result).toBe(0);
+		expect(capturedSql).toContain('to_email LIKE ?');
+		expect(capturedSql).toContain('user_id = ?');
+		expect(capturedSql).toContain('to_email = ?');
+		expect(capturedParams).toContain('%@temporary.tech');
+		expect(capturedParams).toContain(99);
+		expect(capturedParams).toContain('vip@lerxagentic.tech');
+	});
 });

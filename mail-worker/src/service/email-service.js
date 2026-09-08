@@ -792,17 +792,87 @@ const emailService = {
 	},
 
 	async cleanupExpired(c) {
-		const configuredDays = Number(c?.env?.EMAIL_RETENTION_DAYS || c?.env?.email_retention_days);
-		const retentionDays = Number.isFinite(configuredDays) && configuredDays > 0 ? configuredDays : EMAIL_RETENTION_DAYS;
-		const cutoff = dayjs().subtract(retentionDays, 'day').format('YYYY-MM-DD HH:mm:ss');
+		let setting = null;
+		try {
+			if (typeof settingService?.query === 'function') {
+				setting = await settingService.query(c);
+			}
+		} catch (_) {}
+
+		const configuredDays = Number(setting?.emailRetentionDays || c?.env?.EMAIL_RETENTION_DAYS || c?.env?.email_retention_days);
+		const globalRetentionDays = Number.isFinite(configuredDays) && configuredDays > 0 ? configuredDays : EMAIL_RETENTION_DAYS;
+		const globalCutoff = dayjs().subtract(globalRetentionDays, 'day').format('YYYY-MM-DD HH:mm:ss');
+
+		let rules = setting?.emailRetentionRules;
+		if (typeof rules === 'string') {
+			try { rules = JSON.parse(rules); } catch (_) { rules = {}; }
+		}
+		const domainRules = rules?.domains && typeof rules.domains === 'object' ? rules.domains : {};
+		const userRules = rules?.users && typeof rules.users === 'object' ? rules.users : {};
+
+		const orClauses = [`status = ${emailConst.status.NOONE}`];
+		const targetParams = [];
+
+		const excludedDomainConditions = [];
+		const excludedDomainValues = [];
+		for (const [domain, days] of Object.entries(domainRules)) {
+			const dDays = Number(days);
+			if (Number.isFinite(dDays) && dDays > 0 && domain.trim()) {
+				const cleanDomain = domain.trim().toLowerCase().replace(/^@/, '');
+				const dCutoff = dayjs().subtract(dDays, 'day').format('YYYY-MM-DD HH:mm:ss');
+				orClauses.push(`(to_email LIKE ? AND create_time < ?)`);
+				targetParams.push(`%@${cleanDomain}`, dCutoff);
+				excludedDomainConditions.push(`to_email NOT LIKE ?`);
+				excludedDomainValues.push(`%@${cleanDomain}`);
+			}
+		}
+
+		const excludedUserConditions = [];
+		const excludedUserValues = [];
+		for (const [userKey, days] of Object.entries(userRules)) {
+			const uDays = Number(days);
+			if (Number.isFinite(uDays) && uDays > 0 && userKey.trim()) {
+				const cleanKey = userKey.trim();
+				const uCutoff = dayjs().subtract(uDays, 'day').format('YYYY-MM-DD HH:mm:ss');
+				if (/^\d+$/.test(cleanKey)) {
+					orClauses.push(`(user_id = ? AND create_time < ?)`);
+					targetParams.push(Number(cleanKey), uCutoff);
+					excludedUserConditions.push(`user_id != ?`);
+					excludedUserValues.push(Number(cleanKey));
+				} else {
+					orClauses.push(`(to_email = ? AND create_time < ?)`);
+					targetParams.push(cleanKey.toLowerCase(), uCutoff);
+					excludedUserConditions.push(`to_email != ?`);
+					excludedUserValues.push(cleanKey.toLowerCase());
+				}
+			}
+		}
+
+		let defaultClause = `(create_time < ?`;
+		const defaultParams = [globalCutoff];
+
+		if (excludedDomainConditions.length > 0) {
+			defaultClause += ` AND ${excludedDomainConditions.join(' AND ')}`;
+			defaultParams.push(...excludedDomainValues);
+		}
+
+		if (excludedUserConditions.length > 0) {
+			defaultClause += ` AND ${excludedUserConditions.join(' AND ')}`;
+			defaultParams.push(...excludedUserValues);
+		}
+		defaultClause += `)`;
+
+		orClauses.push(defaultClause);
+		targetParams.push(...defaultParams);
+
 		const targetSql = `
 			SELECT email_id
 			FROM email
-			WHERE status = ${emailConst.status.NOONE} OR create_time < ?
+			WHERE ${orClauses.join(' OR ')}
 			ORDER BY email_id
 			LIMIT ?
 		`;
-		const targetParams = [cutoff, EMAIL_CLEANUP_BATCH_SIZE];
+		targetParams.push(EMAIL_CLEANUP_BATCH_SIZE);
 		const targetRows = await c.env.db.prepare(targetSql).bind(...targetParams).all();
 		if (!targetRows.results?.length) {
 			return 0;

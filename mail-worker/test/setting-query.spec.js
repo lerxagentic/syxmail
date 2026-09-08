@@ -25,7 +25,7 @@ describe('email settings lookup', () => {
 		const c = context(null);
 		const result = await settingService.query(c);
 		expect(result.emailPrefixFilter).toEqual(['admin', 'support']);
-		expect(c.env.kv.put).toHaveBeenCalledWith(KvConst.SETTING, JSON.stringify({ ...row, resendTokens: {} }));
+		expect(c.env.kv.put).toHaveBeenCalledWith(KvConst.SETTING, JSON.stringify({ ...row, resendTokens: {}, emailRetentionRules: { domains: {}, users: {} }, emailRetentionDays: 7 }));
 	});
 
 	it.each([

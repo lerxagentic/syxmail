@@ -201,6 +201,23 @@
                   </el-button>
                 </div>
               </div>
+              <div class="setting-item">
+                <div>
+                  <span>{{ $t('emailRetention') }}</span>
+                  <el-tooltip effect="dark" :content="$t('emailRetentionDesc')">
+                    <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+                  </el-tooltip>
+                </div>
+                <div class="forward">
+                  <span class="mr-2" style="font-size: 13px; color: var(--el-text-color-secondary);">
+                    {{ setting.emailRetentionDays || 7 }} {{ $t('days') }}
+                  </span>
+                  <el-button class="opt-button" style="margin-top: 0" @click="openRetentionModal" size="small"
+                             type="primary">
+                    <Icon icon="fluent:settings-48-regular" width="16" height="16"/>
+                  </el-button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -799,6 +816,73 @@
         </el-form>
         <el-button type="primary" style="width: 100%;" :loading="settingLoading" @click="saveAiCodeFilter">{{ $t('save') }}</el-button>
       </el-dialog>
+      <el-dialog v-model="retentionModalShow" class="forward-dialog" width="540px" @closed="resetRetentionForm">
+        <template #header>
+          <div class="forward-head">
+            <span class="forward-set-title">{{ $t('emailRetention') }}</span>
+            <el-tooltip effect="dark" :content="$t('emailRetentionDesc')">
+              <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+            </el-tooltip>
+          </div>
+        </template>
+        <el-form label-position="top">
+          <el-form-item :label="$t('retentionDays')">
+            <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+              <el-input-number v-model="retentionForm.days" :min="1" :max="365" style="width: 140px;"/>
+              <span style="color: var(--el-text-color-secondary); font-size: 13px;">{{ $t('days') }}</span>
+            </div>
+          </el-form-item>
+
+          <el-divider content-position="left">{{ $t('domainRetentionRules') }}</el-divider>
+          <div style="margin-bottom: 12px; display: flex; gap: 8px;">
+            <el-select v-model="newDomainRule.domain" filterable allow-create default-first-option :placeholder="$t('domainSelectPlaceholder')" style="flex: 1;">
+              <el-option v-for="d in settingStore.domainList" :key="d" :label="d" :value="d"/>
+            </el-select>
+            <el-input-number v-model="newDomainRule.days" :min="1" :max="365" style="width: 110px;"/>
+            <el-button type="primary" @click="addDomainRetentionRule">{{ $t('addRule') }}</el-button>
+          </div>
+          <div v-if="domainRulesList.length > 0" style="margin-bottom: 16px;">
+            <el-table :data="domainRulesList" size="small" border style="width: 100%;">
+              <el-table-column prop="domain" label="Domain"/>
+              <el-table-column prop="days" :label="$t('days')" width="90"/>
+              <el-table-column label="" width="70" align="center">
+                <template #default="{ row }">
+                  <el-button link type="danger" size="small" @click="removeDomainRule(row.domain)">
+                    <Icon icon="material-symbols:delete-outline" width="16" height="16"/>
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <div v-else style="font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 16px;">
+            {{ $t('noRules') }}
+          </div>
+
+          <el-divider content-position="left">{{ $t('userRetentionRules') }}</el-divider>
+          <div style="margin-bottom: 12px; display: flex; gap: 8px;">
+            <el-input v-model="newUserRule.user" :placeholder="$t('userOrEmailPlaceholder')" style="flex: 1;"/>
+            <el-input-number v-model="newUserRule.days" :min="1" :max="365" style="width: 110px;"/>
+            <el-button type="primary" @click="addUserRetentionRule">{{ $t('addRule') }}</el-button>
+          </div>
+          <div v-if="userRulesList.length > 0" style="margin-bottom: 16px;">
+            <el-table :data="userRulesList" size="small" border style="width: 100%;">
+              <el-table-column prop="user" :label="$t('userOrEmail')"/>
+              <el-table-column prop="days" :label="$t('days')" width="90"/>
+              <el-table-column label="" width="70" align="center">
+                <template #default="{ row }">
+                  <el-button link type="danger" size="small" @click="removeUserRule(row.user)">
+                    <Icon icon="material-symbols:delete-outline" width="16" height="16"/>
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <div v-else style="font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 16px;">
+            {{ $t('noRules') }}
+          </div>
+        </el-form>
+        <el-button type="primary" style="width: 100%; margin-top: 8px;" :loading="settingLoading" @click="saveRetentionSettings">{{ $t('save') }}</el-button>
+      </el-dialog>
     </el-scrollbar>
   </div>
 </template>
@@ -847,6 +931,28 @@ const thirdEmailShow = ref(false)
 const forwardRulesShow = ref(false)
 const emailPrefixShow = ref(false)
 const showResendList = ref(false)
+const retentionModalShow = ref(false)
+const retentionForm = ref({
+  days: 7,
+  domains: {},
+  users: {}
+})
+const newDomainRule = ref({
+  domain: '',
+  days: 1
+})
+const newUserRule = ref({
+  user: '',
+  days: 1
+})
+
+const domainRulesList = computed(() => {
+  return Object.entries(retentionForm.value.domains || {}).map(([domain, days]) => ({ domain, days }))
+})
+
+const userRulesList = computed(() => {
+  return Object.entries(retentionForm.value.users || {}).map(([user, days]) => ({ user, days }))
+})
 const settingStore = useSettingStore();
 const uiStore = useUiStore();
 const {settings: setting} = storeToRefs(settingStore);
@@ -1407,6 +1513,59 @@ function openAiCodeFilter() {
   aiCodeFilterShow.value = true
 }
 
+function openRetentionModal() {
+  retentionForm.value.days = Number(setting.value.emailRetentionDays) || 7;
+  let rules = setting.value.emailRetentionRules;
+  if (typeof rules === 'string') {
+    try { rules = JSON.parse(rules); } catch (_) { rules = {}; }
+  }
+  retentionForm.value.domains = { ...((rules && rules.domains) || {}) };
+  retentionForm.value.users = { ...((rules && rules.users) || {}) };
+  newDomainRule.value.domain = settingStore.domainList?.[0] || '';
+  newDomainRule.value.days = 1;
+  newUserRule.value.user = '';
+  newUserRule.value.days = 1;
+  retentionModalShow.value = true;
+}
+
+function addDomainRetentionRule() {
+  const d = newDomainRule.value.domain?.trim().toLowerCase().replace(/^@/, '');
+  if (!d) return;
+  retentionForm.value.domains[d] = Number(newDomainRule.value.days) || 1;
+  newDomainRule.value.domain = '';
+}
+
+function removeDomainRule(domain) {
+  delete retentionForm.value.domains[domain];
+}
+
+function addUserRetentionRule() {
+  const u = newUserRule.value.user?.trim();
+  if (!u) return;
+  retentionForm.value.users[u] = Number(newUserRule.value.days) || 1;
+  newUserRule.value.user = '';
+}
+
+function removeUserRule(user) {
+  delete retentionForm.value.users[user];
+}
+
+function resetRetentionForm() {
+  newDomainRule.value = { domain: '', days: 1 };
+  newUserRule.value = { user: '', days: 1 };
+}
+
+function saveRetentionSettings() {
+  editSetting({
+    emailRetentionDays: Number(retentionForm.value.days) || 7,
+    emailRetentionRules: {
+      domains: retentionForm.value.domains,
+      users: retentionForm.value.users
+    }
+  });
+  retentionModalShow.value = false;
+}
+
 function saveResendToken() {
   const settingForm = {
     resendTokens: {}
@@ -1493,6 +1652,7 @@ function editSetting(settingForm, refreshStatus = true) {
     addS3Show.value = false
     emailPrefixShow.value = false
     aiCodeFilterShow.value = false
+    retentionModalShow.value = false
   }).catch((e) => {
     loginOpacity.value = setting.value.loginOpacity
     setting.value = {...setting.value, ...JSON.parse(backup)}
