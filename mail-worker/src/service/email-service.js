@@ -149,9 +149,22 @@ const emailService = {
 			.run();
 	},
 
-	receive(c, params, cidAttList, r2domain) {
-		params.content = this.imgReplace(params.content, cidAttList, r2domain)
-		return orm(c).insert(email).values({ ...params }).returning().get();
+	async receive(c, params, cidAttList, r2domain) {
+		params.content = this.imgReplace(params.content, cidAttList, r2domain);
+		try {
+			return await orm(c).insert(email).values({ ...params }).returning().get();
+		} catch (e) {
+			if (e.message && (e.message.includes('no such column: code') || e.message.includes('has no column named code') || e.message.includes('no column named code'))) {
+				console.warn('Missing column code in email table, applying schema patch...', e.message);
+				try {
+					await c.env.db.prepare(`ALTER TABLE email ADD COLUMN code TEXT NOT NULL DEFAULT '';`).run();
+					return await orm(c).insert(email).values({ ...params }).returning().get();
+				} catch (alterErr) {
+					console.error('Failed to alter table email to add code column:', alterErr);
+				}
+			}
+			throw e;
+		}
 	},
 
 	//邮件发送

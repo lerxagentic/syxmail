@@ -13,10 +13,46 @@ import userContext from '../security/user-context';
 const settingService = {
 
 	async refresh(c) {
-		const settingRow = await orm(c).select().from(setting).get();
-		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
-		c.set('setting', settingRow);
-		await c.env.kv.put(KvConst.SETTING, JSON.stringify(settingRow));
+		let settingRow;
+		try {
+			settingRow = await orm(c).select().from(setting).get();
+		} catch (e) {
+			if (e.message && (e.message.includes('no such column') || e.message.includes('has no column named'))) {
+				console.warn('Missing column in setting table, applying schema patch...', e.message);
+				const alterSqls = [
+					`ALTER TABLE setting ADD COLUMN ai_code INTEGER NOT NULL DEFAULT 1;`,
+					`ALTER TABLE setting ADD COLUMN ai_code_filter TEXT NOT NULL DEFAULT '';`,
+					`ALTER TABLE setting ADD COLUMN domain TEXT NOT NULL DEFAULT '[]';`,
+					`ALTER TABLE setting ADD COLUMN black_subject TEXT NOT NULL DEFAULT '';`,
+					`ALTER TABLE setting ADD COLUMN black_content TEXT NOT NULL DEFAULT '';`,
+					`ALTER TABLE setting ADD COLUMN black_from TEXT NOT NULL DEFAULT '';`
+				];
+				for (const sql of alterSqls) {
+					try { await c.env.db.prepare(sql).run(); } catch (_) {}
+				}
+				settingRow = await orm(c).select().from(setting).get();
+			} else {
+				throw e;
+			}
+		}
+
+		if (!settingRow) {
+			throw new BizError('Database not initialized.');
+		}
+
+		let resendTokens = {};
+		try {
+			resendTokens = typeof settingRow.resendTokens === 'string' ? JSON.parse(settingRow.resendTokens) : (settingRow.resendTokens || {});
+		} catch (_) {
+			resendTokens = {};
+		}
+
+		const cachedSetting = { ...settingRow, resendTokens };
+		if (c.env?.kv) {
+			await c.env.kv.put(KvConst.SETTING, JSON.stringify(cachedSetting));
+		}
+		c.set?.('setting', cachedSetting);
+		return cachedSetting;
 	},
 
 	async query(c) {
@@ -25,10 +61,17 @@ const settingService = {
 			return c.get('setting')
 		}
 
-		const setting = await c.env.kv.get(KvConst.SETTING, { type: 'json' });
+		const cachedSetting = c.env?.kv ? await c.env.kv.get(KvConst.SETTING, { type: 'json' }) : null;
+		const setting = { ...(cachedSetting || await this.refresh(c)) };
 
-		if (!setting) {
-			throw new BizError('Database not initialized.');
+		if (typeof setting.resendTokens === 'string') {
+			try {
+				setting.resendTokens = JSON.parse(setting.resendTokens);
+			} catch (_) {
+				setting.resendTokens = {};
+			}
+		} else if (!setting.resendTokens) {
+			setting.resendTokens = {};
 		}
 
 		let domainList = [];
@@ -43,7 +86,7 @@ const settingService = {
 		}
 
 		if (!domainList || domainList.length === 0) {
-			let envDomains = c.env.domain || [];
+			let envDomains = c.env?.domain || [];
 			if (typeof envDomains === 'string') {
 				try {
 					envDomains = JSON.parse(envDomains);
@@ -58,8 +101,8 @@ const settingService = {
 		setting.domainList = uniqueDomains.map((item) => '@' + item);
 
 
-		let linuxdoSwitch = c.env.linuxdo_switch;
-		let projectLink = c.env.project_link;
+		let linuxdoSwitch = c.env?.linuxdo_switch;
+		let projectLink = c.env?.project_link;
 
 		if (typeof linuxdoSwitch === 'string' && linuxdoSwitch === 'true') {
 			linuxdoSwitch = true
@@ -79,11 +122,13 @@ const settingService = {
 
 		setting.projectLink = projectLink;
 
-		setting.linuxdoClientId = c.env.linuxdo_client_id;
-		setting.linuxdoCallbackUrl = c.env.linuxdo_callback_url;
+		setting.linuxdoClientId = c.env?.linuxdo_client_id;
+		setting.linuxdoCallbackUrl = c.env?.linuxdo_callback_url;
 		setting.linuxdoSwitch = linuxdoSwitch;
 
-		setting.emailPrefixFilter = setting.emailPrefixFilter.split(",").filter(Boolean);
+		setting.emailPrefixFilter = (Array.isArray(setting.emailPrefixFilter)
+			? setting.emailPrefixFilter
+			: (setting.emailPrefixFilter || '').split(',')).filter(Boolean);
 
 		c.set?.('setting', setting);
 		return setting;

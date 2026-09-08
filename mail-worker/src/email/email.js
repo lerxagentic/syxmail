@@ -38,17 +38,13 @@ export async function email(message, env, ctx) {
 			return;
 		}
 
-		const reader = message.raw.getReader();
-		let content = '';
+		// Preserve MIME bytes and charset information across stream chunk boundaries.
+		const email = await PostalMime.parse(await new Response(message.raw).arrayBuffer());
 
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			content += new TextDecoder().decode(value);
+		if (!email?.from?.address?.trim()) {
+			message.setReject('Missing or invalid From header');
+			return;
 		}
-
-		const email = await PostalMime.parse(content);
-
 
 		const blockFlag = checkBlock(blackSubject, blackContent, blackFrom, email);
 
@@ -67,12 +63,16 @@ export async function email(message, env, ctx) {
 		let userRow = {}
 
 		if (account) {
-			 userRow = await userService.selectByIdIncludeDel({ env: env }, account.userId);
+			userRow = await userService.selectByIdIncludeDel({ env: env }, account.userId);
+			if (!userRow) {
+				message.setReject('Recipient not found');
+				return;
+			}
 		}
 
 		if (account && userRow.email !== env.admin) {
 
-			let { banEmail, availDomain } = await roleService.selectByUserId({ env: env }, account.userId);
+			let { banEmail = '', availDomain = '' } = (await roleService.selectByUserId({ env: env }, account.userId)) || {};
 
 			if (!roleService.hasAvailDomainPerm(availDomain, message.to)) {
 				message.setReject('The recipient is not authorized to use this domain.');
@@ -87,7 +87,7 @@ export async function email(message, env, ctx) {
 		}
 
 
-		if (!email.to) {
+		if (!Array.isArray(email.to) || email.to.length === 0) {
 			email.to = [{ address: message.to, name: emailUtils.getName(message.to)}]
 		}
 
@@ -99,16 +99,16 @@ export async function email(message, env, ctx) {
 			toName: toName,
 			sendEmail: email.from.address,
 			name: email.from.name || emailUtils.getName(email.from.address),
-			subject: email.subject,
-			code,
-			content: email.html,
-			text: email.text,
+			subject: email.subject || '',
+			code: code || '',
+			content: email.html || '',
+			text: email.text || '',
 			cc: email.cc ? JSON.stringify(email.cc) : '[]',
 			bcc: email.bcc ? JSON.stringify(email.bcc) : '[]',
 			recipient: JSON.stringify(email.to),
-			inReplyTo: email.inReplyTo,
-			relation: email.references,
-			messageId: email.messageId,
+			inReplyTo: email.inReplyTo || '',
+			relation: email.references || '',
+			messageId: email.messageId || '',
 			userId: account ? account.userId : 0,
 			accountId: account ? account.accountId : 0,
 			isDel: isDel.DELETE,
@@ -118,10 +118,10 @@ export async function email(message, env, ctx) {
 		const attachments = [];
 		const cidAttachments = [];
 
-		for (let item of email.attachments) {
+		for (let item of email.attachments || []) {
 			let attachment = { ...item };
-			attachment.key = constant.ATTACHMENT_PREFIX + await fileUtils.getBuffHash(attachment.content) + fileUtils.getExtFileName(item.filename);
-			attachment.size = item.content.length ?? item.content.byteLength;
+			attachment.key = constant.ATTACHMENT_PREFIX + await fileUtils.getBuffHash(attachment.content) + fileUtils.getExtFileName(item.filename || '');
+			attachment.size = item.content?.length ?? item.content?.byteLength ?? 0;
 			attachments.push(attachment);
 			if (attachment.contentId) {
 				cidAttachments.push(attachment);
@@ -149,7 +149,7 @@ export async function email(message, env, ctx) {
 
 		if (ruleType === settingConst.ruleType.RULE) {
 
-			const emails = ruleEmail.split(',');
+			const emails = (ruleEmail || '').split(',').map(e => e.trim()).filter(Boolean);
 
 			if (!emails.includes(message.to)) {
 				return;
@@ -159,13 +159,18 @@ export async function email(message, env, ctx) {
 
 		//转发到TG
 		if (tgBotStatus === settingConst.tgBotStatus.OPEN && tgChatId) {
-			await telegramService.sendEmailToBot({ env }, emailRow)
+			try {
+				await telegramService.sendEmailToBot({ env }, emailRow);
+			} catch (e) {
+				// The message is already persisted; a notification failure must not retry delivery.
+				console.error('Telegram notification failed after email was saved:', e);
+			}
 		}
 
 		//转发到其他邮箱
 		if (forwardStatus === settingConst.forwardStatus.OPEN && forwardEmail) {
 
-			const emails = forwardEmail.split(',');
+			const emails = (forwardEmail || '').split(',').map(e => e.trim()).filter(Boolean);
 
 			await Promise.all(emails.map(async email => {
 
@@ -187,24 +192,25 @@ export async function email(message, env, ctx) {
 
 function checkBlock(blackSubjectStr, blackContentStr, blackFromStr, email) {
 
-	const blackFromList = blackFromStr ? blackFromStr.split(',') : []
-	const blackContentList = blackContentStr ? blackContentStr.split(',') : []
-	const blackSubjectList = blackSubjectStr ? blackSubjectStr.split(',') : []
+	const blackFromList = blackFromStr ? blackFromStr.split(',').map(s => s.trim()).filter(Boolean) : []
+	const blackContentList = blackContentStr ? blackContentStr.split(',').map(s => s.trim()).filter(Boolean) : []
+	const blackSubjectList = blackSubjectStr ? blackSubjectStr.split(',').map(s => s.trim()).filter(Boolean) : []
 
 	for (const blackSubject of blackSubjectList) {
-		if (email.subject?.includes(blackSubject)) {
+		if (blackSubject && email.subject?.includes(blackSubject)) {
 			return true
 		}
 	}
 
 	for (const blackContent of blackContentList) {
-		if (email.html?.includes(blackContent) || email.text?.includes(blackContent)) {
+		if (blackContent && (email.html?.includes(blackContent) || email.text?.includes(blackContent))) {
 			return true
 		}
 	}
 
+	const fromAddr = email.from?.address || '';
 	for (const blackFrom of blackFromList) {
-		if (email.from.address === blackFrom || emailUtils.getDomain(email.from.address) === blackFrom) {
+		if (blackFrom && (fromAddr === blackFrom || (fromAddr && emailUtils.getDomain(fromAddr) === blackFrom))) {
 			return true
 		}
 	}
