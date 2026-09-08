@@ -218,7 +218,12 @@ jobs:
           echo "✅ Setup completed."
 
       - name: 🏗️ 构建前端 / Build frontend
-        run: (cd ../mail-vue && pnpm run build)
+        run: |
+          (cd ../mail-vue && pnpm run build)
+          mkdir -p ./dist
+          if [ -d "../mail-vue/dist" ] && [ "$(ls -A ../mail-vue/dist)" ]; then
+            cp -r ../mail-vue/dist/* ./dist/
+          fi
         working-directory: ./mail-worker
 
       - name: 🚀 开始部署 / Start deployment
