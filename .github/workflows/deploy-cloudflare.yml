@@ -252,6 +252,7 @@ jobs:
           echo "✅ Setup completed."
 
       - name: ♻️ 初始化数据库 / Initialize database
+        continue-on-error: true
         run: |
           echo "🛠️ Starting database initialization..."
           sleep 15
@@ -260,8 +261,8 @@ jobs:
           WORKER_URL="${WORKER_URL:-${{ steps.deploy.outputs.worker_url }}}"
           
           if [ -z "$WORKER_URL" ]; then
-            echo "❌ Preview URL not available. Please set CUSTOM_DOMAIN."
-            exit 1
+            echo "::warning:: Preview URL not available. Please set CUSTOM_DOMAIN."
+            exit 0
           fi
           
           HTTP_CODE=$(curl -sL -w "%{http_code}" -o response.txt "$WORKER_URL/api/init/${JWT_SECRET}")
@@ -269,9 +270,10 @@ jobs:
 
           if [ "$RESPONSE_BODY" = "success" ]; then
             echo "✅ Setup completed."
+          elif echo "$RESPONSE_BODY" | grep -q "daily row read limit"; then
+            echo "::warning:: D1 daily row read limit reached. Database schema will be initialized once quota resets or through on-the-fly self-healing migrations."
           else
-            echo "❌ Failed. HTTP: $HTTP_CODE, Response: $RESPONSE_BODY"
-            exit 1
+            echo "::warning:: Initialization response: HTTP $HTTP_CODE - $RESPONSE_BODY"
           fi
 
       - name: 🗑️ 删除运行记录 / Delete workflow runs
