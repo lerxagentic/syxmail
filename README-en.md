@@ -86,8 +86,8 @@ SyxMail/
    ```ini
    # mail-worker/.dev.vars
    CLOUDFLARE_ACCOUNT_ID="your_cloudflare_account_id"
-   CLOUDFLARE_API_TOKEN="your_cloudflare_api_token"
-   JWT_SECRET="your_random_jwt_secret_key"
+   CLOUDFLARE_API_TOKEN = "<SET_VIA_SECRET>"
+   jwt_secret = "<SET_VIA_SECRET>"
    ```
 
 2. **For Production Deployment:**
